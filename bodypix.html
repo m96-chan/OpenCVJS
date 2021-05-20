@@ -25,10 +25,10 @@
         };
         segmentBody = (input, output, net) => {
             async function renderFrame() {
-                const partsSegmentation = await net.segmentPersonParts(input);
-                const backgroundBlurAmount = 20;
-                const edgeBlurAmount = 3;
-                const flipHorizontal = false;
+                // const partsSegmentation = await net.segmentPersonParts(input);
+                // const backgroundBlurAmount = 20;
+                // const edgeBlurAmount = 3;
+                // const flipHorizontal = false;
                 // bodyPix.drawBokehEffect(
                 //      output, input, partsSegmentation, backgroundBlurAmount,
                 //      edgeBlurAmount, flipHorizontal);
@@ -37,7 +37,7 @@
                 //     output, input, partsSegmentation, [-1, 0, 1],
                 //     backgroundBlurAmount, edgeBlurAmount, flipHorizontal
                 // )
-                customRender(output, input, partsSegmentation);
+                customRender(output, input, await net.segmentPersonParts(input));
                 requestAnimationFrame(renderFrame);
             }
 
@@ -50,21 +50,16 @@
             const net = await bodyPix.load();
             const partsSegmentation = await net.segmentPersonParts(videoElem)
             console.log(partsSegmentation);
-
-            const nose = partsSegmentation.allPoses[0].keypoints.find(x => x.part === 'nose');
-            console.log(nose);
+            console.log(parseFace(partsSegmentation));
             console.log(virtualFace.width)
             console.log(virtualFace.height);
 
             segmentBody(videoElem, canvasElem, net);
         };
 
-        const buff = new OffscreenCanvas(1280, 720);
+        const backgroundMask = new OffscreenCanvas(1280, 720);
         const virtualBack = new Image();
         virtualBack.src = 'sample.jpg';
-
-        const virtualFace = new Image();
-        virtualFace.src = 'overface.png';
 
         function renderImageDataToCanvas(image, canvas) {
             canvas.width = image.width;
@@ -87,33 +82,131 @@
                 true, [-1, 0, 1]);
 
 
-
-            renderImageDataToCanvas(backGroundMask, buff);
+            renderImageDataToCanvas(backGroundMask, backgroundMask);
             ctx.drawImage(virtualBack, 0, 0);
             ctx.globalCompositeOperation = 'destination-out'
-            ctx.drawImage(buff, 0, 0);
+            ctx.drawImage(backgroundMask, 0, 0);
             ctx.globalCompositeOperation = 'destination-over'
             ctx.drawImage(input, 0, 0);
             // バーチャル顔
             if (Array.isArray(partsSegmentation.allPoses) && partsSegmentation.allPoses.length > 0) {
+                // 鼻の位置ってあんまりよくないんじゃないかと疑っている
                 const nose = partsSegmentation.allPoses[0].keypoints.find(x => x.part === 'nose');
                 if (nose) {
-                    ctx.globalCompositeOperation = 'source-over'
+                    //console.log(nose.position);
+                    ctx.globalCompositeOperation = 'source-over';
+                    const c = renderFace(partsSegmentation);
                     // キャンバスに画像かきこんでゴニョゴニョしたほうが良さそう。
-                    ctx.drawImage(virtualFace, nose.position.x - 420, nose.position.y - 370);
+                    ctx.drawImage(c,  0, 0);
                 }
             }
-            //ctx.drawImage(input, 0, 0, input.width, input.height);
-            ctx.restore();
+        }
+
+
+        const virtualFace = new Image();
+        virtualFace.src = 'overface.png';
+
+        renderFace = (partsSegmentation) => {
+            const virtualFaceCanvas = new OffscreenCanvas(1280, 720);
+            const ctx = virtualFaceCanvas.getContext("2d");
+            // ctx.clearRect(0, 0, virtualFaceCanvas.width, virtualFaceCanvas.height);
+            // const leftFace = partsSegmentation.data.filter(x => x === 0).length;
+            // const rightFace = partsSegmentation.data.filter(x => x === 1).length;
+            //　const faceIndexes = partsSegmentation.data.map((e, i) => (e === 1 || e === 1) ? i : undefined).filter(x => x);
+            const parsed = parseFace(partsSegmentation);
+            // 顔が画面外
+            if (!parsed.hasFace) {
+                return virtualFaceCanvas;
+            }
+            let log = false;
+            // 左右反転
+            if (!parsed.isLeft) {
+                ctx.scale(-1, 1);
+                ctx.translate(-virtualFaceCanvas.width, 0);
+            }
+            const scale = calculateFaceScale(parsed);
+            ctx.scale(scale, scale);
+            const renderPos = calculatePos(parsed, scale, partsSegmentation.width);
+            ctx.drawImage(virtualFace, renderPos.x, renderPos.y);
+            return virtualFaceCanvas
+        };
+
+        calculateFaceScale = (parsed) => {
+            const baseImageH = virtualFace.height * 60 / 100;
+            const faceH =  parsed.rightBottom.y - parsed.leftTop.y;
+            return faceH / baseImageH;
+        }
+
+        calculatePos = (parsed, scale, width) => {
+            const faceImageCenterX = (virtualFace.width / 2  * scale | 0)
+            const faceImageCenterY = (virtualFace.height / 2 * scale | 0);
+            const faceCenterX = parsed.isLeft ? parsed.center.x : width - parsed.center.x;
+            const faceCenterY = parsed.center.y;
+
+            return {
+                x: (faceCenterX - faceImageCenterX) / scale,
+                y: (faceCenterY - faceImageCenterY) / scale,
+            }
+        }
+
+        parseFace = (partsSegmentation) => {
+            let lcount = 0;
+            let rcount = 0;
+            // let indexes = [];
+            let minX = partsSegmentation.width;
+            let minY = partsSegmentation.height;
+            let maxX = -1;
+            let maxY = -1;
+            for (const [i, d] of partsSegmentation.data.entries()) {
+                if (d === 0) {
+                    lcount++;
+                    // ドットの座標全とりしたい場合
+                    //indexes.push({x: i % partsSegmentation.width, y: i / partsSegmentation.width | 0});
+                    const x = i % partsSegmentation.width;
+                    const y = i / partsSegmentation.width | 0;
+                    minX = x > minX ? minX : x;
+                    minY = y > minY ? minY : y;
+                    maxX = x > maxX ? x : maxX;
+                    maxY = y > maxY ? y : maxY;
+                }
+                if (d === 1) {
+                    rcount++;
+                    //indexes.push({x: i % partsSegmentation.width, y: i / partsSegmentation.width | 0});
+                    const x = i % partsSegmentation.width;
+                    const y = i / partsSegmentation.width | 0;
+                    minX = x > minX ? minX : x;
+                    minY = y > minY ? minY : y;
+                    maxX = x > maxX ? x : maxX;
+                    maxY = y > maxY ? y : maxY;
+                }
+            }
+            return {
+                leftFace: lcount,
+                rightFace: rcount,
+                leftTop: {
+                    x: minX,
+                    y: minY
+                },
+                rightBottom: {
+                    x: maxX,
+                    y: maxY
+                },
+                center: {
+                    x: (minX + maxX) / 2 | 0,
+                    y: (minY + maxY) / 2 | 0
+                },
+                hasFace: (lcount + rcount) > 0,
+                isLeft: lcount > rcount,
+            }
         }
     </script>
 </head>
 <body onload="start()">
-<div>
+<div style="display: none">
     <video id="web-camera-video" autoplay muted playsinline width="1280" height="720"></video>
 </div>
 <div>
-    <canvas id="web-camera-render"></canvas>
+    <canvas id="web-camera-render" width="1280" height="720"></canvas>
 </div>
 </body>
 </html>
