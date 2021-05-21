@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Tensor(3D)</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/body-pix@2.0"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/posenet@2.2.2"></script>
+
+    <script src="https://unpkg.com/three@0.126.1/build/three.js"></script>
+    <script src="https://unpkg.com/three@0.126.1/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://unpkg.com/three@0.126.1/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@0.3.5/lib/three-vrm.min.js"></script>
+    <script src="camera.js"></script>
+
+    <script>
+        const imageScaleFactor = 0.50;
+        const flipHorizontal = false;
+        const outputStride = 16;
+
+        start = async () => {
+            const videoElem = document.querySelector("#webcam-video");
+            const webcamCanvasElem = document.querySelector("#debug-webcam-render");
+            const renderCanvasElem = document.querySelector("#render");
+            await setupCamera(videoElem);
+            const net = await posenet.load();
+            // HiCost net
+            // const net = await posenet.load({
+            //     architecture: 'ResNet50',
+            //     outputStride: 32,
+            //     inputResolution: { width: 257, height: 200 },
+            //     quantBytes: 2
+            // });
+            const pose = await net.estimateSinglePose(videoElem, imageScaleFactor, flipHorizontal, outputStride);
+            console.log(pose);
+            render(videoElem, webcamCanvasElem, renderCanvasElem, net);
+        }
+
+
+        render = (input, debugCanvas, vrmCanvas, net) => {
+            const renderer = initRenderer(vrmCanvas);
+            const camera = initCamera(vrmCanvas);
+            const scene = initScene(vrmCanvas);
+            let vrm = null;
+            initVRM('./data/zunko_vrm.vrm').then((object) => {
+                console.log(object);
+                scene.add(object.scene);
+                vrm = object;
+            })
+
+            async function loop() {
+                const poses = await net.estimateMultiplePoses(
+                    input,
+                    imageScaleFactor,
+                    flipHorizontal,
+                    outputStride,
+                );
+                renderDebug(input, debugCanvas, poses);
+                renderVRM(input, poses, renderer, scene, camera, vrm);
+                requestAnimationFrame(loop);
+            }
+
+            loop()
+        }
+        initRenderer = (output) => {
+            const renderer = new THREE.WebGLRenderer({canvas: output});
+            renderer.setPixelRatio(window.devicePixelRatio);
+            return renderer
+        }
+
+        initCamera = (output) => {
+            const camera = new THREE.PerspectiveCamera(30.0, output.width / output.height, 0.1, 20);
+            camera.position.set(0.0, 1.0, 5.0);
+            return camera;
+        }
+
+        initScene = (output) => {
+            // scene
+            const scene = new THREE.Scene();
+            // light
+            const light = new THREE.DirectionalLight(0xffffff);
+            light.position.set(1.0, 1.0, 1.0).normalize();
+            scene.add(light);
+
+            // helpers
+            const gridHelper = new THREE.GridHelper(10, 10);
+            scene.add(gridHelper);
+            const axesHelper = new THREE.AxesHelper(5);
+            scene.add(axesHelper);
+            return scene
+        }
+
+        initVRM = async (vrmPath) => {
+            // gltf and vrm
+            const loader = new THREE.GLTFLoader();
+            loader.crossOrigin = 'anonymous';
+
+            return new Promise((resolve, reject) => {
+                loader.load(
+                    // URL of the VRM you want to load
+                    './data/zunko_vrm.vrm',
+                    // called when the resource is loaded
+                    (gltf) => {
+                        // calling this function greatly improves the performance
+                        THREE.VRMUtils.removeUnnecessaryJoints(gltf.scene);
+                        // generate VRM instance from gltf
+                        THREE.VRM.from(gltf).then((vrm) => {
+                            //console.log( vrm );
+                            resolve(vrm);
+                            vrm.humanoid.getBoneNode(THREE.VRMSchema.HumanoidBoneName.Hips).rotation.y = Math.PI;
+                        });
+                    },
+                    // called while loading is progressing
+                    (progress) => console.log('Loading model...', 100.0 * (progress.loaded / progress.total), '%'),
+                    // called when loading has errors
+                    (error) => reject(error)
+                );
+            })
+        }
+        getAngleFromX = (pos2, pos1) => Math.atan2(pos2.y - pos1.y, pos2.x - pos1.x)
+
+        renderVRM = (input, poses, renderer, scene, camera, vrm) => {
+            let poseStore = {};
+            const pose = poses[0];
+            if (!pose || !vrm) {
+                renderer.render(scene, camera)
+                return
+            }
+            for (const keypoint of pose.keypoints) {
+                if (keypoint.score < 0.4) {
+                    continue;
+                }
+                poseStore[keypoint.part] = {
+                    x: input.width / 2 - keypoint.position.x,
+                    y: input.height / 2 - keypoint.position.y,
+                }
+            }
+            if (poseStore.leftShoulder && poseStore.rightShoulder) {
+                let angle = getAngleFromX(poseStore.rightShoulder, poseStore.leftShoulder);
+                if (angle !== null) {
+                    angle = angle;
+                    vrm.humanoid.getBoneNode( THREE.VRMSchema.HumanoidBoneName.Spine ).rotation.z = angle;
+                }
+            }
+
+            renderer.render(scene, camera)
+        }
+
+        renderDebug = (input, output, poses) => {
+            const pose = poses[0];
+            const ctx = output.getContext('2d');
+            // カメラだす場合はこっち
+            // ctx.drawImage(input, 0, 0, input.width, input.height);
+            ctx.fillStyle = "rgb(0, 0, 0)";
+            ctx.fillRect(0, 0, output.width, output.height);
+            ctx.fillStyle = "rgb(255,241,0)";
+            if (!pose) {
+                return;
+            }
+            for (const point of pose.keypoints) {
+                ctx.beginPath();
+                ctx.arc(point.position.x, point.position.y, 4, 0, Math.PI * 2, true);
+                ctx.fill();
+                ctx.closePath();
+            }
+            const lines = [
+                // 左
+                {s: "leftShoulder", e: "leftElbow"},
+                {s: "leftShoulder", e: "leftHip"},
+                {s: "leftElbow", e: "leftWrist"},
+                {s: "leftHip", e: "leftKnee"},
+                {s: "leftKnee", e: "leftAnkle"},
+                // 右
+                {s: "rightShoulder", e: "rightElbow"},
+                {s: "rightShoulder", e: "rightHip"},
+                {s: "rightElbow", e: "rightWrist"},
+                {s: "rightHip", e: "rightKnee"},
+                {s: "rightKnee", e: "rightAnkle"},
+                //　左右結合
+                {s: "leftShoulder", e: "rightShoulder"},
+                {s: "leftHip", e: "rightHip"},
+            ];
+            ctx.beginPath();
+            ctx.strokeStyle = "rgb(255,241,0)";
+            ctx.lineWidth = 4;
+            for (const line of lines) {
+                const start = pose.keypoints.find(x => x.part === line.s)
+                ctx.moveTo(start.position.x, start.position.y);
+                const end = pose.keypoints.find(x => x.part === line.e)
+                ctx.lineTo(end.position.x, end.position.y);
+            }
+            ctx.stroke();
+            ctx.closePath();
+        }
+
+
+    </script>
+</head>
+<body onload="start()">
+<div style="display: none">
+    <video id="webcam-video" autoplay muted playsinline width="1280" height="720"></video>
+</div>
+<div>
+    <canvas id="debug-webcam-render" width="1280" height="720"></canvas>
+</div>
+<div>
+    <canvas id="render" width="1280" height="720"></canvas>
+</div>
+</body>
+</html>
