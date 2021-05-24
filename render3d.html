@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <title>Tensor(3D)</title>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.2"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/body-pix@2.0"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/posenet@2.2.2"></script>
 
     <script src="https://unpkg.com/three@0.126.1/build/three.js"></script>
@@ -135,11 +134,62 @@
                     y: input.height / 2 - keypoint.position.y,
                 }
             }
+            let angles = {};
             if (poseStore.leftShoulder && poseStore.rightShoulder) {
                 let angle = getAngleFromX(poseStore.rightShoulder, poseStore.leftShoulder);
                 if (angle !== null) {
-                    angle = angle;
+                    angles.Spine = angle;
                     vrm.humanoid.getBoneNode( THREE.VRMSchema.HumanoidBoneName.Spine ).rotation.z = angle;
+                }
+            }
+            if (poseStore.leftEye && poseStore.rightEye) {
+                let angle = getAngleFromX(poseStore.rightEye, poseStore.leftEye);
+                if (angle !== null){
+                    angles.Neck = angle;
+                    angle = angle - (angles.Spine || 0);
+                    vrm.humanoid.getBoneNode( THREE.VRMSchema.HumanoidBoneName.Neck ).rotation.z = angle;
+                }
+            }
+            if (poseStore.leftShoulder && poseStore.leftElbow) {
+                // arms
+                let angle = getAngleFromX(poseStore.leftElbow, poseStore.leftShoulder);
+                if (angle !== null) {
+                    angle = -angle;
+                    angle = Math.PI - angle;
+                    angles.LeftUpperArm = angle;
+                    angle = angle - (angles.Spine || 0);
+                    vrm.humanoid.getBoneNode( THREE.VRMSchema.HumanoidBoneName.LeftUpperArm ).rotation.z = angle;
+                }
+            }
+            if (poseStore.leftWrist && poseStore.leftElbow) {
+                // arms
+                let angle = getAngleFromX(poseStore.leftWrist, poseStore.leftElbow);
+                if (angle !== null) {
+                    angle = -angle;
+                    angle = Math.PI - angle;
+                    angles.LeftLowerArm = angle;
+                    angle = angle - (angles.LeftUpperArm || 0);
+                    vrm.humanoid.getBoneNode( THREE.VRMSchema.HumanoidBoneName.LeftLowerArm ).rotation.z = angle;
+                }
+            }
+            if (poseStore.rightShoulder && poseStore.rightElbow) {
+                // arms
+                let angle = getAngleFromX(poseStore.rightElbow, poseStore.rightShoulder);
+                if (angle !== null) {
+                    angle = angle;
+                    angles.RightUpperArm = angle;
+                    angle = angle - (angles.Spine || 0);
+                    vrm.humanoid.getBoneNode( THREE.VRMSchema.HumanoidBoneName.RightUpperArm ).rotation.z = angle;
+                }
+            }
+            if (poseStore.rightWrist && poseStore.rightElbow) {
+                // arms
+                let angle = getAngleFromX(poseStore.rightWrist, poseStore.rightElbow);
+                if (angle !== null) {
+                    angle = angle;
+                    angles.RightLowerArm = angle;
+                    angle = angle - (angles.RightUpperArm || 0);
+                    vrm.humanoid.getBoneNode( THREE.VRMSchema.HumanoidBoneName.RightLowerArm ).rotation.z = angle;
                 }
             }
 

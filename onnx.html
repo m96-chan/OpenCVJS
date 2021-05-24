@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>ONNX(3D)</title>
+    <script src="https://cdn.jsdelivr.net/npm/onnxjs@0.1.8/dist/onnx.min.js"></script>
+    <script src="camera.js"></script>
+    <script>
+        start = async () => {
+            const videoElem = document.querySelector("#webcam-video");
+            const webcamCanvasElem = document.querySelector("#debug-webcam-render");
+            const renderCanvasElem = document.querySelector("#render");
+            await setupCamera(videoElem, 448, 448);
+
+            const session = new InferenceSession({
+                backendHint: 'cpu'
+            });
+            // このモデルロードできんかった。
+            await session.loadModel('./data/Resnet34_3inputs_448x448_20200609.onnx');
+
+            const ctx =  webcamCanvasElem.getContext('2d');
+            ctx.drawImage(o);
+
+            const t = new Tensor(webcamCanvasElem, "float32" ,[1,3,448,448])
+        }
+    </script>
+</head>
+<body onload="start()">
+<div>
+    <video id="webcam-video" autoplay muted playsinline width="448" height="448"></video>
+</div>
+<div>
+    <canvas id="debug-webcam-render" width="448" height="448"></canvas>
+</div>
+<div>
+    <canvas id="render" width="448" height="448"></canvas>
+</div>
+</body>
+</html>
